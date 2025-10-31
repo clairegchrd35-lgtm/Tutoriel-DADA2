@@ -11,7 +11,7 @@ library(dada2); packageVersion("dada2")
 
 
 ```{r}
-path <- "~/MiSeq_SOP" 
+path <- "MiSeq_SOP" 
 # Définit le chemin vers le dossier contenant les fichiers fastq après les avoir décompressés.
 # Remplace "~/MiSeq_SOP" par le chemin réel sur ton ordinateur si nécessaire.
 
