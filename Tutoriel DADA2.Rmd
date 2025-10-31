@@ -5,80 +5,117 @@ output: html_notebook
 
 ```{r}
 library(dada2); packageVersion("dada2")
+# Charge le package DADA2 pour l'analyse de séquences amplicon
+# Affiche ensuite la version du package utilisé
 ```
 
+
 ```{r}
-path <- "~/MiSeq_SOP" # CHANGE ME to the directory containing the fastq files after unzipping.
+path <- "~/MiSeq_SOP" 
+# Définit le chemin vers le dossier contenant les fichiers fastq après les avoir décompressés.
+# Remplace "~/MiSeq_SOP" par le chemin réel sur ton ordinateur si nécessaire.
+
 list.files(path)
+# Liste tous les fichiers présents dans ce dossier pour vérifier que les fastq ont bien été trouvés
 ```
 ```{r}
 # Forward and reverse fastq filenames have format: SAMPLENAME_R1_001.fastq and SAMPLENAME_R2_001.fastq
+
 fnFs <- sort(list.files(path, pattern="_R1_001.fastq", full.names = TRUE))
+# Récupère et trie tous les fichiers fastq "forward" (_R1_001.fastq) dans le dossier path
+# full.names = TRUE donne le chemin complet 
+
 fnRs <- sort(list.files(path, pattern="_R2_001.fastq", full.names = TRUE))
-# Extract sample names, assuming filenames have format: SAMPLENAME_XXX.fastq
+# Récupère et trie tous les fichiers fastq "reverse" (_R2_001.fastq) dans le dossier path
+
+
 sample.names <- sapply(strsplit(basename(fnFs), "_"), `[`, 1)
+# Extrait le nom de l'échantillon à partir du nom du fichier fastq forward
 ```
 ```{r}
 plotQualityProfile(fnFs[1:2])
+# Affiche le profil de qualité des deux premiers fichiers forward
 ```
 
 ```{r}
 plotQualityProfile(fnRs[1:2])
+# Affiche le profil de qualité des deux premiers fichiers reverse (_R2_001.fastq)
 ```
 ```{r}
 # Place filtered files in filtered/ subdirectory
 filtFs <- file.path(path, "filtered", paste0(sample.names, "_F_filt.fastq.gz"))
+# Crée les chemins complets pour les fichiers forward filtrés
+
 filtRs <- file.path(path, "filtered", paste0(sample.names, "_R_filt.fastq.gz"))
+# Crée les chemins complets pour les fichiers reverse filtrés
+
 names(filtFs) <- sample.names
 names(filtRs) <- sample.names
+# Associe les noms des échantillons aux vecteurs de fichiers filtrés
 ```
 ```{r}
 out <- filterAndTrim(fnFs, filtFs, fnRs, filtRs, truncLen=c(240,160),
               maxN=0, maxEE=c(2,2), truncQ=2, rm.phix=TRUE,
               compress=TRUE, multithread=TRUE) # On Windows set multithread=FALSE
 head(out)
+# Filtre et tronque les reads forward et reverse selon leur qualité et supprime les reads PhiX, puis affiche un aperçu du nombre de reads retenus
 ```
 ```{r}
 errF <- learnErrors(filtFs, multithread=TRUE)
+# Apprend le modèle d'erreurs à partir des reads forward filtrés pour corriger les erreurs de séquençage
 ```
 ```{r}
 errR <- learnErrors(filtRs, multithread=TRUE)
+# Apprend le modèle d'erreurs à partir des reads reverse filtrés pour corriger les erreurs de séquençage
 ```
 ```{r}
 plotErrors(errF, nominalQ=TRUE)
+# Affiche le profil des erreurs estimées pour les reads forward afin de visualiser la qualité du modèle d'erreurs
 ```
 ```{r}
 dadaFs <- dada(filtFs, err=errF, multithread=TRUE)
+# Applique l'algorithme DADA aux reads forward filtrés pour corriger les erreurs et identifier les vraies séquences
 ```
 
 ```{r}
 dadaRs <- dada(filtRs, err=errR, multithread=TRUE)
+# Applique l'algorithme DADA aux reads reverse filtrés pour corriger les erreurs et identifier les vraies séquences
 ```
 
 ```{r}
 dadaFs[[1]]
+# Affiche le détail des séquences denoised et de leur abondance pour le premier échantillon forward
 ```
 ```{r}
 mergers <- mergePairs(dadaFs, filtFs, dadaRs, filtRs, verbose=TRUE)
-# Inspect the merger data.frame from the first sample
+# Fusionne les reads forward et reverse denoised pour reconstruire les séquences complètes d'ADN
+
 head(mergers[[1]])
+# Affiche les premières lignes du tableau de fusion pour le premier échantillon afin de vérifier la fusion
 ```
 
 ```{r}
 seqtab <- makeSequenceTable(mergers)
+# Construit la table de séquences (ASV table) : lignes = échantillons, colonnes = séquences uniques
+
 dim(seqtab)
+# Affiche les dimensions de la table (nombre d'échantillons × nombre de séquences uniques)
 ```
 ```{r}
-# Inspect distribution of sequence lengths
+# Vérifie la distribution des longueurs des séquences dans la table ASV
 table(nchar(getSequences(seqtab)))
 ```
 
 ```{r}
 seqtab.nochim <- removeBimeraDenovo(seqtab, method="consensus", multithread=TRUE, verbose=TRUE)
+# Supprime les séquences chimériques (artefacts formés par recombinaison de séquences abondantes)
+
 dim(seqtab.nochim)
+# Affiche les dimensions de la table après suppression des chimères (échantillons × séquences uniques restantes)
 ```
 ```{r}
 sum(seqtab.nochim)/sum(seqtab)
+# Calcule la proportion de reads conservés après suppression des chimères
 ```
 ```{r}
 getN <- function(x) sum(getUniques(x))
@@ -87,38 +124,50 @@ track <- cbind(out, sapply(dadaFs, getN), sapply(dadaRs, getN), sapply(mergers, 
 colnames(track) <- c("input", "filtered", "denoisedF", "denoisedR", "merged", "nonchim")
 rownames(track) <- sample.names
 head(track)
+# Crée un tableau récapitulatif montrant le nombre de reads conservés à chaque étape du pipeline pour chaque échantillon
 ```
 
 ```{r}
 taxa <- assignTaxonomy(seqtab.nochim, "~/silva_nr_v132_train_set.fa.gz", multithread=TRUE)
+# Assigne un taxon à chaque séquence non chimérique en comparant aux séquences de référence SILVA
 ```
 
 ```{r}
 taxa.print <- taxa # Removing sequence rownames for display only
 rownames(taxa.print) <- NULL
+# Prépare une version du tableau taxonomique sans les noms de séquences pour un affichage plus lisible
+
 head(taxa.print)
+# Affiche les premières lignes du tableau pour vérifier l’assignation taxonomique
 ```
 ```{r}
 unqs.mock <- seqtab.nochim["Mock",]
 unqs.mock <- sort(unqs.mock[unqs.mock>0], decreasing=TRUE) # Drop ASVs absent in the Mock
 cat("DADA2 inferred", length(unqs.mock), "sample sequences present in the Mock community.\n")
+# Analyse des séquences présentes dans l'échantillon témoin "Mock" : 
+# Trie les ASV détectées par abondance et affiche combien de séquences DADA2 a identifiées dans le Mock
 ```
 ```{r}
 mock.ref <- getSequences(file.path(path, "HMP_MOCK.v35.fasta"))
 match.ref <- sum(sapply(names(unqs.mock), function(x) any(grepl(x, mock.ref))))
 cat("Of those,", sum(match.ref), "were exact matches to the expected reference sequences.\n")
+# Compare les ASV détectées dans le Mock aux séquences de référence attendues et affiche combien correspondent exactement
 ```
 ```{r}
 library(phyloseq); packageVersion("phyloseq")
+# Charge le package phyloseq pour l'analyse et la visualisation des données microbiomes et affiche sa version
 ```
 ```{r}
 library(Biostrings); packageVersion("Biostrings")
+# Charge le package Biostrings pour manipuler les séquences ADN/ARN en R et affiche sa version
 ```
 ```{r}
 library(ggplot2); packageVersion("ggplot2")
+# Charge le package ggplot2 pour créer des graphiques et visualisations, et affiche sa version
 ```
 ```{r}
 theme_set(theme_bw())
+# Définit le thème par défaut des graphiques ggplot2 sur un fond blanc avec grille (theme_bw)
 ```
 ```{r}
 samples.out <- rownames(seqtab.nochim)
@@ -130,12 +179,18 @@ samdf <- data.frame(Subject=subject, Gender=gender, Day=day)
 samdf$When <- "Early"
 samdf$When[samdf$Day>100] <- "Late"
 rownames(samdf) <- samples.out
+# Crée un tableau de métadonnées pour les échantillons à partir des noms de fichiers : 
+# - extrait le sujet, le sexe et le jour de l'échantillon
+# - ajoute une colonne "When" indiquant Early (jour ≤100) ou Late (jour >100)
+# - définit les noms des lignes du tableau selon les noms des échantillons
 ```
 ```{r}
 ps <- phyloseq(otu_table(seqtab.nochim, taxa_are_rows=FALSE), 
                sample_data(samdf), 
                tax_table(taxa))
 ps <- prune_samples(sample_names(ps) != "Mock", ps) # Remove mock sample
+# Crée un objet phyloseq combinant la table ASV, les métadonnées et les informations taxonomiques,
+# puis supprime l'échantillon témoin "Mock" pour les analyses downstream
 ```
 ```{r}
 dna <- Biostrings::DNAStringSet(taxa_names(ps))
@@ -143,22 +198,38 @@ names(dna) <- taxa_names(ps)
 ps <- merge_phyloseq(ps, dna)
 taxa_names(ps) <- paste0("ASV", seq(ntaxa(ps)))
 ps
+# Crée un objet DNAStringSet avec les séquences des ASV, l'ajoute à l'objet phyloseq,
+# puis renomme les ASV de manière uniforme (ASV1, ASV2, ...) pour simplifier les références
 ```
 ```{r}
 plot_richness(ps, x="Day", measures=c("Shannon", "Simpson"), color="When")
+# Trace la diversité alpha (indices de Shannon et Simpson) des échantillons en fonction du jour,
+# en colorant selon la période "Early" ou "Late"
 ```
 ```{r}
 # Transform data to proportions as appropriate for Bray-Curtis distances
 ps.prop <- transform_sample_counts(ps, function(otu) otu/sum(otu))
 ord.nmds.bray <- ordinate(ps.prop, method="NMDS", distance="bray")
+# Transforme les comptes d'ASV en proportions pour chaque échantillon et calcule un ordonnancement NMDS
+# basé sur la distance de Bray-Curtis pour visualiser les différences communautaires entre échantillons
 ```
 ```{r}
 plot_ordination(ps.prop, ord.nmds.bray, color="When", title="Bray NMDS")
+# Affiche l'ordonnancement NMDS basé sur la distance de Bray-Curtis en colorant les échantillons selon "When"
 ```
 ```{r}
 top20 <- names(sort(taxa_sums(ps), decreasing=TRUE))[1:20]
+# Sélectionne les 20 ASV les plus abondantes dans tout l'objet phyloseq
+
 ps.top20 <- transform_sample_counts(ps, function(OTU) OTU/sum(OTU))
+# Transforme les comptes d'ASV en proportions pour chaque échantillon
+
 ps.top20 <- prune_taxa(top20, ps.top20)
+# Garde uniquement les 20 ASV les plus abondantes, supprime les autres
+
 plot_bar(ps.top20, x="Day", fill="Family") + facet_wrap(~When, scales="free_x")
+# Crée un diagramme en barres montrant la composition relative des ASV par jour
+# Les barres sont colorées selon la famille taxonomique
+# Sépare les graphiques selon les périodes "Early" et "Late"
 ```
 
