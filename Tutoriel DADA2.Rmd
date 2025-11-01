@@ -3,173 +3,336 @@ title: "Tutoriel DADA2"
 output: html_notebook
 ---
 
+## Préparation de l'environnement
+
+On charge le package DADA2 et on vérifie la version
+
 ```{r}
-library(dada2); packageVersion("dada2")
+library(dada2)
+packageVersion("dada2")
+
+
 # Charge le package DADA2 pour l'analyse de séquences amplicon
 # Affiche ensuite la version du package utilisé
+library(dada2); packageVersion("dada2")
 ```
 
+Les fichiers FASTQ d'exemple proviennent du protocole MiSeq SOP.
+
+Ils ont été décompressés et stockés dans un dossier.
+
+La variable `path` indique l'emplacement de ce dossier sur l'ordinateur.
 
 ```{r}
-path <- "MiSeq_SOP" 
 # Définit le chemin vers le dossier contenant les fichiers fastq après les avoir décompressés.
 # Remplace "~/MiSeq_SOP" par le chemin réel sur ton ordinateur si nécessaire.
+path <- "MiSeq_SOP" 
 
+# Liste tous les fichiers présents dans ce dossier pour vérifier que les fastq ont bien été trouvés# Liste tous les fichiers présents dans ce dossier pour vérifier que les fastq ont bien été trouvés
 list.files(path)
-# Liste tous les fichiers présents dans ce dossier pour vérifier que les fastq ont bien été trouvés
 ```
+
+Si le package DADA2 est chargé et que les fichiers FASTQ sont correctement listés, le pipeline peut commencer.
+
+\
+On lit ensuite les noms des fichiers FASTQ et on effectue quelques manipulations pour obtenir deux listes appariées : une pour les lectures forward et une pour les lectures reverse.
+
 ```{r}
 # Forward and reverse fastq filenames have format: SAMPLENAME_R1_001.fastq and SAMPLENAME_R2_001.fastq
 
-fnFs <- sort(list.files(path, pattern="_R1_001.fastq", full.names = TRUE))
 # Récupère et trie tous les fichiers fastq "forward" (_R1_001.fastq) dans le dossier path
 # full.names = TRUE donne le chemin complet 
+fnFs <- sort(list.files(path, pattern="_R1_001.fastq", full.names = TRUE))
 
-fnRs <- sort(list.files(path, pattern="_R2_001.fastq", full.names = TRUE))
 # Récupère et trie tous les fichiers fastq "reverse" (_R2_001.fastq) dans le dossier path
+fnRs <- sort(list.files(path, pattern="_R2_001.fastq", full.names = TRUE))
 
-
-sample.names <- sapply(strsplit(basename(fnFs), "_"), `[`, 1)
 # Extrait le nom de l'échantillon à partir du nom du fichier fastq forward
-```
-```{r}
-plotQualityProfile(fnFs[1:2])
-# Affiche le profil de qualité des deux premiers fichiers forward
+sample.names <- sapply(strsplit(basename(fnFs), "_"), `[`, 1)
 ```
 
+## Inspection des profils de qualité de lecture
+
+On commence par visualiser les profils de qualité des lectures forward (directes) afin de vérifier la qualité des séquences avant filtrage.
+
 ```{r}
-plotQualityProfile(fnRs[1:2])
-# Affiche le profil de qualité des deux premiers fichiers reverse (_R2_001.fastq)
+# Affiche le profil de qualité des deux premiers fichiers forward
+plotQualityProfile(fnFs[1:2])
 ```
+
+La carte thermique montre la fréquence de chaque score de qualité à chaque position de base.
+
+-   La ligne verte indique le score de qualité moyen.
+
+-   Les lignes orange représentent les quartiles de la distribution des scores.
+
+-   La ligne rouge montre la proportion de lectures couvrant au moins cette position (utile surtout pour d'autres technologies, car les lectures Illumina ont généralement toutes la même longueur).
+
+Les lectures forward sont de bonne qualité. Il est recommandé de tronquer les derniers nucléotides pour éviter les erreurs, mais ces profils ne nécessitent pas de suppression supplémentaire.
+
+On va donc tronquer les lectures directes à la position 240.
+
+On passe maintenant à l'inspection des profils de qualité des lectures reverse (inverses) :
+
+```{r}
+# Affiche le profil de qualité des deux premiers fichiers reverse (_R2_001.fastq)
+plotQualityProfile(fnRs[1:2])
+```
+
+Les lectures reverse ont une qualité inférieure, surtout vers la fin, ce qui est courant avec le séquençage Illumina.\
+
+DADA2 prend en compte la qualité des lectures dans son modèle d'erreurs, ce qui rend l'algorithme robuste aux séquences moins bonnes.\
+
+Cependant, tronquer les lectures là où la qualité moyenne chute améliore la détection des variants rares.\
+
+Sur cette base, les lectures inverses seront tronquées à la position 160, là où la qualité diminue fortement.
+
+## Filtrer et découper
+
+On crée des noms pour les fichiers FASTQ filtrés afin de les stocker après le filtrage et le tronquage.\
+
+Chaque échantillon aura un fichier pour les lectures forward et un fichier pour les lectures reverse.
+
 ```{r}
 # Place filtered files in filtered/ subdirectory
-filtFs <- file.path(path, "filtered", paste0(sample.names, "_F_filt.fastq.gz"))
 # Crée les chemins complets pour les fichiers forward filtrés
+filtFs <- file.path(path, "filtered", paste0(sample.names, "_F_filt.fastq.gz"))
 
-filtRs <- file.path(path, "filtered", paste0(sample.names, "_R_filt.fastq.gz"))
 # Crée les chemins complets pour les fichiers reverse filtrés
+filtRs <- file.path(path, "filtered", paste0(sample.names, "_R_filt.fastq.gz"))
 
+# Associe les noms des échantillons aux vecteurs de fichiers filtrés
 names(filtFs) <- sample.names
 names(filtRs) <- sample.names
-# Associe les noms des échantillons aux vecteurs de fichiers filtrés
 ```
+
+On applique les paramètres de filtrage standard de DADA2 pour limiter les erreurs et supprimer les bases ambiguës et contaminations.
+
 ```{r}
+# Filtre et tronque les reads forward et reverse selon leur qualité et supprime les reads PhiX, puis affiche un aperçu du nombre de reads retenus
 out <- filterAndTrim(fnFs, filtFs, fnRs, filtRs, truncLen=c(240,160),
               maxN=0, maxEE=c(2,2), truncQ=2, rm.phix=TRUE,
               compress=TRUE, multithread=TRUE) # On Windows set multithread=FALSE
 head(out)
-# Filtre et tronque les reads forward et reverse selon leur qualité et supprime les reads PhiX, puis affiche un aperçu du nombre de reads retenus
 ```
+
+## Apprentissage des taux d'erreur
+
+DADA2 apprend un modèle d'erreurs spécifique à chaque jeu de données en estimant les taux d'erreur et la composition des échantillons jusqu'à obtenir une solution cohérente.
+
 ```{r}
-errF <- learnErrors(filtFs, multithread=TRUE)
 # Apprend le modèle d'erreurs à partir des reads forward filtrés pour corriger les erreurs de séquençage
+errF <- learnErrors(filtFs, multithread=TRUE)
 ```
+
 ```{r}
-errR <- learnErrors(filtRs, multithread=TRUE)
 # Apprend le modèle d'erreurs à partir des reads reverse filtrés pour corriger les erreurs de séquençage
+errR <- learnErrors(filtRs, multithread=TRUE)
 ```
+
+Il est utile de visualiser les taux d'erreur estimés pour vérifier la cohérence des résultats.
+
 ```{r}
-plotErrors(errF, nominalQ=TRUE)
 # Affiche le profil des erreurs estimées pour les reads forward afin de visualiser la qualité du modèle d'erreurs
+plotErrors(errF, nominalQ=TRUE)
 ```
+
+Les taux d'erreur observés pour chaque transition sont comparés aux taux estimés et attendus, et comme ils correspondent bien et diminuent avec l'amélioration de la qualité, tout semble cohérent pour poursuivre l'analyse.
+
+## Inférence d'échantillon
+
+Les donnée filtrées et tronquées sont maintenant prêtes pour l'inférence des séquences exactes par l'algorithme DADA2.
+
 ```{r}
-dadaFs <- dada(filtFs, err=errF, multithread=TRUE)
 # Applique l'algorithme DADA aux reads forward filtrés pour corriger les erreurs et identifier les vraies séquences
+dadaFs <- dada(filtFs, err=errF, multithread=TRUE)
 ```
 
 ```{r}
-dadaRs <- dada(filtRs, err=errR, multithread=TRUE)
 # Applique l'algorithme DADA aux reads reverse filtrés pour corriger les erreurs et identifier les vraies séquences
+dadaRs <- dada(filtRs, err=errR, multithread=TRUE)
 ```
 
+On inspecte maintenant l'objet renvoyé par l'algorithme DADA2 pour vérifier les résultats et comprendre sa structure.
+
 ```{r}
-dadaFs[[1]]
 # Affiche le détail des séquences denoised et de leur abondance pour le premier échantillon forward
+dadaFs[[1]]
 ```
+
+Pour le premier échantillon, DADA2 a identifié 128 variants de séquence parmi 1979 séquences uniques.
+
+L'objet renvoyé contient de nombreuses informations détaillées sur chaque variant, mais seul un aperçu est présenté ici.
+
+## Fusion des lectures appariées
+
+Pour le premier échantillon, DADA2 a identifié 128 variants de séquence parmi 1979 séquences uniques.
+
+L'objet renvoyé contient de nombreuses informations détaillées sur chaque variant, mais seul un aperçu est présenté ici.
+
 ```{r}
-mergers <- mergePairs(dadaFs, filtFs, dadaRs, filtRs, verbose=TRUE)
 # Fusionne les reads forward et reverse denoised pour reconstruire les séquences complètes d'ADN
+mergers <- mergePairs(dadaFs, filtFs, dadaRs, filtRs, verbose=TRUE)
 
-head(mergers[[1]])
 # Affiche les premières lignes du tableau de fusion pour le premier échantillon afin de vérifier la fusion
+head(mergers[[1]])
 ```
+
+L'objet `mergers` est une liste de data.frames, un par échantillon.
+
+Chaque data.frame contient la séquence fusionnée (`$sequence`), son abondance (`$abundance`) et les indices des variants forward et reverse qui ont été fusionnés.
+
+Les lectures appariées qui ne se chevauchaient pas exactement ont été supprimées par `mergePairs`, ce qui réduit encore les séquences parasites.
+
+## Construction d'une table de séquence
+
+On construit maintenant une table de variants de séquences d'amplicons (ASV), une version plus précise que la table OTU traditionnelle.
 
 ```{r}
-seqtab <- makeSequenceTable(mergers)
 # Construit la table de séquences (ASV table) : lignes = échantillons, colonnes = séquences uniques
+seqtab <- makeSequenceTable(mergers)
 
-dim(seqtab)
 # Affiche les dimensions de la table (nombre d'échantillons × nombre de séquences uniques)
+dim(seqtab)
 ```
+
 ```{r}
 # Vérifie la distribution des longueurs des séquences dans la table ASV
 table(nchar(getSequences(seqtab)))
 ```
 
-```{r}
-seqtab.nochim <- removeBimeraDenovo(seqtab, method="consensus", multithread=TRUE, verbose=TRUE)
-# Supprime les séquences chimériques (artefacts formés par recombinaison de séquences abondantes)
+La table de séquences est une matrice avec des lignes pour chaque échantillon et des colonnes pour chaque variant de séquence.
 
-dim(seqtab.nochim)
+Elle contient 293 ASV, et les longueurs des séquences fusionnées sont toutes dans la plage attendue pour l'amplicon V4.
+
+## Suppresssion des chimères
+
+La méthode principale de DADA2 corrige les erreurs de substitution et d'insertion/délétion, mais certaines chimères restent présentes.
+
+Les ASV débruités facilitent leur identification : une séquence est considérée chimérique si elle peut être reconstruite en combinant exactement des segments gauche et droit provenant de deux séquences parentales plus abondantes.
+
+```{r}
+# Supprime les séquences chimériques (artefacts formés par recombinaison de séquences abondantes)
+seqtab.nochim <- removeBimeraDenovo(seqtab, method="consensus", multithread=TRUE, verbose=TRUE)
+
 # Affiche les dimensions de la table après suppression des chimères (échantillons × séquences uniques restantes)
+dim(seqtab.nochim)
 ```
+
 ```{r}
-sum(seqtab.nochim)/sum(seqtab)
 # Calcule la proportion de reads conservés après suppression des chimères
+sum(seqtab.nochim)/sum(seqtab)
 ```
+
+La proportion de séquences chimériques varie selon les jeux de données et dépend de facteurs expérimentaux et de la complexité des échantillons.
+
+Ici, elles représentent environ 21 % des variants fusionnés, mais seulement 4 % des lectures totales une fois leur abondance prise en compte.
+
+## Suivi des lectures tout au long du pipeline
+
+Pour vérifier l'avancement du pipeline, on examine le nombre de lectures conservées à chaque étape du processus.
+
 ```{r}
+# Crée un tableau récapitulatif montrant le nombre de reads conservés à chaque étape du pipeline pour chaque échantillon
 getN <- function(x) sum(getUniques(x))
 track <- cbind(out, sapply(dadaFs, getN), sapply(dadaRs, getN), sapply(mergers, getN), rowSums(seqtab.nochim))
 # If processing a single sample, remove the sapply calls: e.g. replace sapply(dadaFs, getN) with getN(dadaFs)
 colnames(track) <- c("input", "filtered", "denoisedF", "denoisedR", "merged", "nonchim")
 rownames(track) <- sample.names
 head(track)
-# Crée un tableau récapitulatif montrant le nombre de reads conservés à chaque étape du pipeline pour chaque échantillon
 ```
 
+Les résultats sont encourageants : la majorité des lectures brutes ont été conservées et aucune étape n'a provoqué de perte excessive.
+
+## Attribution d'une taxonomie
+
+Il est courant d'attribuer une taxonomie aux variants de séquence, par exemple pour le séquençage 16S, 18S ou ITS.
+
+DADA2 propose une méthode de classification bayésienne naïve via la fonction `assignTaxonomy`, qui utilise des séquences de référence pour assigner une taxonomie à chaque variant avec un niveau de confiance minimal (`minBoot`).\
+
+Pour ce tutoriel, on utilise le fichier de référence Silva (`silva_nr_v132_train_set.fa.gz`) placé dans le même répertoire que les fichiers FASTQ.
+
 ```{r}
-taxa <- assignTaxonomy(seqtab.nochim, "~/silva_nr_v132_train_set.fa.gz", multithread=TRUE)
 # Assigne un taxon à chaque séquence non chimérique en comparant aux séquences de référence SILVA
+taxa <- assignTaxonomy(seqtab.nochim, "~/silva_nr_v132_train_set.fa.gz", multithread=TRUE)
 ```
 
+On vérifie maintenant les classifications taxonomiques attribuées à nos variants de séquence.
+
 ```{r}
+# Prépare une version du tableau taxonomique sans les noms de séquences pour un affichage plus lisible
 taxa.print <- taxa # Removing sequence rownames for display only
 rownames(taxa.print) <- NULL
-# Prépare une version du tableau taxonomique sans les noms de séquences pour un affichage plus lisible
 
-head(taxa.print)
 # Affiche les premières lignes du tableau pour vérifier l’assignation taxonomique
+head(taxa.print)
 ```
+
+Comme prévu, les Bacteroidetes sont parmi les taxons les plus abondants dans ces échantillons fécaux.
+
+Peu d'espèces ont pu être identifiées, car le séquençage partiel du gène 16S limite la résolution et les bases de données de référence couvrent peu le microbiote intestinal de la souris.
+
+## Evaluation de la précision
+
+Un des échantillons est une « communauté simulée » contenant un mélange de souches connues.
+
+On compare les variants de séquence identifiés par DADA2 à la composition attendue pour évaluer la précision de l'algorithme sur cet échantillon.
+
 ```{r}
+# Analyse des séquences présentes dans l'échantillon témoin "Mock" : 
+# Trie les ASV détectées par abondance et affiche combien de séquences DADA2 a identifiées dans le Mock
 unqs.mock <- seqtab.nochim["Mock",]
 unqs.mock <- sort(unqs.mock[unqs.mock>0], decreasing=TRUE) # Drop ASVs absent in the Mock
 cat("DADA2 inferred", length(unqs.mock), "sample sequences present in the Mock community.\n")
+```
+
+```{r}
 # Analyse des séquences présentes dans l'échantillon témoin "Mock" : 
 # Trie les ASV détectées par abondance et affiche combien de séquences DADA2 a identifiées dans le Mock
-```
-```{r}
 mock.ref <- getSequences(file.path(path, "HMP_MOCK.v35.fasta"))
 match.ref <- sum(sapply(names(unqs.mock), function(x) any(grepl(x, mock.ref))))
 cat("Of those,", sum(match.ref), "were exact matches to the expected reference sequences.\n")
-# Compare les ASV détectées dans le Mock aux séquences de référence attendues et affiche combien correspondent exactement
 ```
+
+La communauté simulée contenait 20 souches bactériennes, et DADA2 a identifié exactement 20 ASV correspondant aux séquences de référence attendues, avec un taux d'erreur résiduel de 0 %.\
+
+**La partie DADA2 du tutoriel se termine ici.**
+
+## Bonus : Passage à phylos
+
+Le package R **phyloseq** permet une analyse approfondie des données de microbiome.
+
+On montre ici comment importer les tableaux produits par DADA2 et ajouter les métadonnées disponibles, comme le sexe, le numéro de l'individu et le jour post-sevrage des prélèvements (par exemple, GXDY).
+
 ```{r}
-library(phyloseq); packageVersion("phyloseq")
 # Charge le package phyloseq pour l'analyse et la visualisation des données microbiomes et affiche sa version
+library(phyloseq); packageVersion("phyloseq")
 ```
+
 ```{r}
-library(Biostrings); packageVersion("Biostrings")
 # Charge le package Biostrings pour manipuler les séquences ADN/ARN en R et affiche sa version
+library(Biostrings); packageVersion("Biostrings")
 ```
+
 ```{r}
-library(ggplot2); packageVersion("ggplot2")
 # Charge le package ggplot2 pour créer des graphiques et visualisations, et affiche sa version
+library(ggplot2); packageVersion("ggplot2")
 ```
+
 ```{r}
-theme_set(theme_bw())
 # Définit le thème par défaut des graphiques ggplot2 sur un fond blanc avec grille (theme_bw)
+theme_set(theme_bw())
 ```
+
+On peut créer un `data.frame` d'échantillons à partir des informations contenues dans les noms de fichiers.
+
+Dans un cas réel, ces métadonnées seraient généralement lues depuis un fichier séparé.
+
 ```{r}
+# Crée un tableau de métadonnées pour les échantillons à partir des noms de fichiers : 
+# - extrait le sujet, le sexe et le jour de l'échantillon
+# - ajoute une colonne "When" indiquant Early (jour ≤100) ou Late (jour >100)
+# - définit les noms des lignes du tableau selon les noms des échantillons
 samples.out <- rownames(seqtab.nochim)
 subject <- sapply(strsplit(samples.out, "D"), `[`, 1)
 gender <- substr(subject,1,1)
@@ -179,57 +342,81 @@ samdf <- data.frame(Subject=subject, Gender=gender, Day=day)
 samdf$When <- "Early"
 samdf$When[samdf$Day>100] <- "Late"
 rownames(samdf) <- samples.out
-# Crée un tableau de métadonnées pour les échantillons à partir des noms de fichiers : 
-# - extrait le sujet, le sexe et le jour de l'échantillon
-# - ajoute une colonne "When" indiquant Early (jour ≤100) ou Late (jour >100)
-# - définit les noms des lignes du tableau selon les noms des échantillons
 ```
+
+On crée maintenant un objet **phyloseq** en utilisant directement les tables et résultats produits par DADA2.
+
 ```{r}
+# Crée un objet phyloseq combinant la table ASV, les métadonnées et les informations taxonomiques,
+# puis supprime l'échantillon témoin "Mock" pour les analyses downstream
 ps <- phyloseq(otu_table(seqtab.nochim, taxa_are_rows=FALSE), 
                sample_data(samdf), 
                tax_table(taxa))
 ps <- prune_samples(sample_names(ps) != "Mock", ps) # Remove mock sample
-# Crée un objet phyloseq combinant la table ASV, les métadonnées et les informations taxonomiques,
-# puis supprime l'échantillon témoin "Mock" pour les analyses downstream
 ```
+
+Pour faciliter l'utilisation dans phyloseq, on attribue des noms courts aux ASV (par exemple ASV1, ASV2) plutôt que d'utiliser les séquences complètes.
+
+Les séquences d'ADN complètes sont conservées dans l'emplacement `refseq` de l'objet phyloseq, ce qui permet de les utiliser ultérieurement tout en affichant des noms courts dans les tableaux et graphiques.
+
 ```{r}
+# Crée un objet DNAStringSet avec les séquences des ASV, l'ajoute à l'objet phyloseq,
+# puis renomme les ASV de manière uniforme (ASV1, ASV2, ...) pour simplifier les références
 dna <- Biostrings::DNAStringSet(taxa_names(ps))
 names(dna) <- taxa_names(ps)
 ps <- merge_phyloseq(ps, dna)
 taxa_names(ps) <- paste0("ASV", seq(ntaxa(ps)))
 ps
-# Crée un objet DNAStringSet avec les séquences des ASV, l'ajoute à l'objet phyloseq,
-# puis renomme les ASV de manière uniforme (ASV1, ASV2, ...) pour simplifier les références
 ```
+
+Les données sont maintenant prêtes à être analysées avec **phyloseq**.
+
+On commence par visualiser l'**alpha-diversité**, qui mesure la diversité au sein de chaque échantillon.
+
 ```{r}
-plot_richness(ps, x="Day", measures=c("Shannon", "Simpson"), color="When")
 # Trace la diversité alpha (indices de Shannon et Simpson) des échantillons en fonction du jour,
 # en colorant selon la période "Early" ou "Late"
+plot_richness(ps, x="Day", measures=c("Shannon", "Simpson"), color="When")
 ```
+
+Il n'y a pas de différence systématique notable dans la diversité alpha entre les échantillons précoces et tardifs.\
+
+On passe maintenant à l'**ordination**, qui permet de visualiser les similarités et différences globales entre les échantillons.
+
 ```{r}
-# Transform data to proportions as appropriate for Bray-Curtis distances
-ps.prop <- transform_sample_counts(ps, function(otu) otu/sum(otu))
-ord.nmds.bray <- ordinate(ps.prop, method="NMDS", distance="bray")
 # Transforme les comptes d'ASV en proportions pour chaque échantillon et calcule un ordonnancement NMDS
 # basé sur la distance de Bray-Curtis pour visualiser les différences communautaires entre échantillons
+ps.prop <- transform_sample_counts(ps, function(otu) otu/sum(otu))
+ord.nmds.bray <- ordinate(ps.prop, method="NMDS", distance="bray")
 ```
+
 ```{r}
-plot_ordination(ps.prop, ord.nmds.bray, color="When", title="Bray NMDS")
 # Affiche l'ordonnancement NMDS basé sur la distance de Bray-Curtis en colorant les échantillons selon "When"
+plot_ordination(ps.prop, ord.nmds.bray, color="When", title="Bray NMDS")
 ```
+
+L'ordination montre une séparation claire entre les échantillons précoces et tardifs.\
+
+On peut maintenant visualiser la composition taxonomique des échantillons à l'aide d'un **diagramme à barres**.
+
 ```{r}
-top20 <- names(sort(taxa_sums(ps), decreasing=TRUE))[1:20]
 # Sélectionne les 20 ASV les plus abondantes dans tout l'objet phyloseq
+top20 <- names(sort(taxa_sums(ps), decreasing=TRUE))[1:20]
 
-ps.top20 <- transform_sample_counts(ps, function(OTU) OTU/sum(OTU))
 # Transforme les comptes d'ASV en proportions pour chaque échantillon
+ps.top20 <- transform_sample_counts(ps, function(OTU) OTU/sum(OTU))
 
-ps.top20 <- prune_taxa(top20, ps.top20)
 # Garde uniquement les 20 ASV les plus abondantes, supprime les autres
+ps.top20 <- prune_taxa(top20, ps.top20)
 
-plot_bar(ps.top20, x="Day", fill="Family") + facet_wrap(~When, scales="free_x")
 # Crée un diagramme en barres montrant la composition relative des ASV par jour
 # Les barres sont colorées selon la famille taxonomique
 # Sépare les graphiques selon les périodes "Early" et "Late"
+plot_bar(ps.top20, x="Day", fill="Family") + facet_wrap(~When, scales="free_x")
 ```
 
+La distribution des 20 principaux taxons ne montre pas d'explication évidente à la séparation entre échantillons précoces et tardifs.\
+
+Ces exemples illustrent simplement comment importer les résultats de DADA2 dans phyloseq et réaliser quelques analyses de base.
+
+Pour explorer toutes les possibilités offertes par phyloseq, consultez la documentation officielle : [**https://joey711.github.io/phyloseq/**](https://joey711.github.io/phyloseq/)**.**
