@@ -3,6 +3,8 @@ title: "Tutoriel DADA2"
 output: html_notebook
 ---
 
+Ce tutoriel présente la version 1.16 du pipeline DADA2, depuis les fichiers FASTQ démultiplexés jusqu\'à la construction de tables ASV, l\'attribution de taxonomie et l\'importation dans phyloseq pour analyse.
+
 ## Préparation de l'environnement
 
 On charge le package DADA2 et on vérifie la version
@@ -68,7 +70,9 @@ La carte thermique montre la fréquence de chaque score de qualité à chaque po
 
 -   La ligne rouge montre la proportion de lectures couvrant au moins cette position (utile surtout pour d'autres technologies, car les lectures Illumina ont généralement toutes la même longueur).
 
-Les lectures forward sont de bonne qualité. Il est recommandé de tronquer les derniers nucléotides pour éviter les erreurs, mais ces profils ne nécessitent pas de suppression supplémentaire.
+Les lectures forward sont de bonne qualité.
+
+Il est recommandé de tronquer les derniers nucléotides pour éviter les erreurs, mais ces profils ne nécessitent pas de suppression supplémentaire.
 
 On va donc tronquer les lectures directes à la position 240.
 
@@ -298,7 +302,7 @@ La communauté simulée contenait 20 souches bactériennes, et DADA2 a identifi�
 
 **La partie DADA2 du tutoriel se termine ici.**
 
-## Bonus : Passage à phylos
+## Bonus : Passage à phyloseq
 
 Le package R **phyloseq** permet une analyse approfondie des données de microbiome.
 
